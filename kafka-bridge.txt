@@ -1,0 +1,152 @@
+>> creatting a cluster:	
+kind create cluster --name kind-ranjith
+
+>>check the info:
+kubectl cluster-info --context kind-kind-ranjith
+
+>>create a namespace:
+kubectl create namespace strimzi
+
+>>Set this namespace to default for your Kubernetes context:
+kubectl config set-context --current --namespace strimzi
+
+>>Install the Strimzi Cluster Operator using the Helm command line tool
+helm install strimzi-cluster-operator oci://quay.io/strimzi-helm/strimzi-kafka-operator
+
+>>Verify that the Cluster Operator has been deployed successfully using the Helm command line tool:
+helm ls
+
+till here i configure cluster set-up
+
+now i am write yaml for creating a brokers (here i am using plaintext)
+vim kafka.yaml (script available in s/m)
+
+after completing this we need to run the script using following commands
+
+vim kafka.yaml
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: my-cluster
+  namespace: strimzi
+spec:
+  kafka:
+    version: 3.7.0
+    replicas: 1
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      offsets.topic.replication.factor: 1
+      transaction.state.log.replication.factor: 1
+      transaction.state.log.min.isr: 1
+      log.message.format.version: "3.7"
+    storage:
+      type: ephemeral
+  zookeeper:
+    replicas: 3
+    storage:
+      type: ephemeral
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+
+kubectl apply -f kafka.yaml
+
+vim bridge.yaml
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaBridge
+metadata:
+  name: my-bridge
+spec:
+  replicas: 1
+  bootstrapServers: my-cluster-kafka-0.my-cluster-kafka-brokers.strimzi.svc:9092
+  http:
+    port: 8080
+
+kubectl apply -f bridge.yaml
+
+kubectl exec -it my-cluster-kafka-0 bash
+
+bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic bridge-quickstart-topic --partitions 3 --replication-factor 1
+
+curl -X GET   http://my-bridge-bridge-service:8080/topics ( this command is helps to list the topics )
+
+>>>>>>>>>>>>>>>>> below command is used to Get topic configuration and partition details <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+curl -X GET \
+  http://my-bridge-bridge-service:8080/topics/bridge-quickstart-topic
+  
+  
+>>>>>>>>>>>>following command is used produce data through http<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+curl -X POST \
+  http://my-bridge-bridge-service:8080/topics/bridge-quickstart-topic \
+  -H 'content-type: application/vnd.kafka.json.v2+json' \
+  -d '{
+    "records": [
+        {
+            "key": "my-key",
+            "value": "sales-lead-0001"
+        },
+        {
+            "value": "sales-lead-0002",
+            "partition": 2
+        },
+        {
+            "value": "sales-lead-0003"
+        }
+    ]
+}'
+
+
+>>>>>>>>>>>>>>below command is used to List the partitions of a specific topic <<<<<<<<<<<<<<<<<<<<<<<<<
+
+curl -X GET \
+  http://my-bridge-bridge-service:8080/topics/bridge-quickstart-topic/partitions
+
+
+
+>>>>>>>>>>>>>>>>>>> below commad is used to Creating a Kafka Bridge consumer <<<<<<<<<<<<<<<<<<<<<
+  
+curl -X GET \
+  http://my-bridge-bridge-service:8080/topics/bridge-quickstart-topic/partitions/0/offsets  
+  
+curl -X POST http://my-bridge-bridge-service:8080/consumers/bridge-quickstart-consumer-group \
+  -H 'content-type: application/vnd.kafka.v2+json' \
+  -d '{
+    "name": "bridge-quickstart-consumer-2",
+    "auto.offset.reset": "earliest",
+    "format": "json",
+    "enable.auto.commit": false,
+    "fetch.min.bytes": 512,
+    "consumer.request.timeout.ms": 30000
+  }'
+  
+>>>>>>>>>>>>>>>> below command is used to Subscribing a Kafka Bridge consumer to topics <<<<<<<<<<<<<<<<<<<<<<<<<
+
+curl -X POST http://my-bridge-bridge-service:8080/consumers/bridge-quickstart-consumer-group/instances/bridge-quickstart-consumer-2/subscription \
+  -H 'content-type: application/vnd.kafka.v2+json' \
+  -d '{
+    "topics": [
+        "bridge-quickstart-topic"
+    ]
+}'  
+
+
+>>>>>>>>>>>>>>below command is used to get data <<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+curl -X GET http://my-bridge-bridge-service:8080/consumers/bridge-quickstart-consumer-group/instances/bridge-quickstart-consumer-2/records \
+  -H 'accept: application/vnd.kafka.json.v2+json'
+
+>>>>>>>>>>>>>>>>>>>>> port-forward <<<<<<<<<<<<<<<<<<<<<
+
+kubectl port-forward pod/my-bridge-bridge-65955bb9d4-p6p4r 8080:8080 -n strimzi
+
+https://github.com/quickbooks2018/aws/blob/master/Kafka/kafka-in-kubernetes/strimzi-play-with-docker-kafka-commands
+
+
+
+
